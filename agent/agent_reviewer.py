@@ -48,25 +48,23 @@ def load_file_content(filepath):
 
 def call_llm_agent(user_prompt):
     """
-    Invokes LLM API (DeepSeek, OpenAI, Gemini) if an API key is configured.
-    Returns LLM generated response string, or None if no API key is present.
+    Invokes LLM API (DeepSeek, OpenAI, Gemini). Strictly requires an API key.
     """
     deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
 
     if deepseek_key:
         url = "https://api.deepseek.com/chat/completions"
         model = "deepseek-chat"
         api_key = deepseek_key
-        print("[Agent] Calling DeepSeek API (deepseek-chat)...")
+        print("[Agent] Invoking DeepSeek LLM API (deepseek-chat)...")
     elif openai_key:
         url = "https://api.openai.com/v1/chat/completions"
         model = "gpt-4o"
         api_key = openai_key
-        print("[Agent] Calling OpenAI API (gpt-4o)...")
+        print("[Agent] Invoking OpenAI LLM API (gpt-4o)...")
     else:
-        return None
+        raise RuntimeError("[Error] No LLM API key found in environment variables (DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY required).")
 
     headers = {
         "Content-Type": "application/json",
@@ -86,66 +84,11 @@ def call_llm_agent(user_prompt):
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        raise RuntimeError(f"[Error] LLM API HTTP {e.code}: {error_body}")
     except Exception as e:
-        print(f"[Agent] LLM API call error: {e}. Falling back to contextual reasoning engine.")
-        return None
-
-def fallback_contextual_reasoning(template_json, policy_obj, exceptions_manifest):
-    """
-    Contextual reasoning engine used when LLM API key is not present.
-    Simulates the exact LLM data-path evaluation.
-    """
-    template = json.loads(template_json) if template_json else {}
-    resources = template.get("Resources", {})
-    exceptions = (json.loads(exceptions_manifest) if exceptions_manifest else {}).get("approved_exceptions", [])
-
-    for logical_id, resource in resources.items():
-        if resource.get("Type") in ["AWS::IAM::Policy", "AWS::IAM::Role"]:
-            props = resource.get("Properties", {})
-            doc = props.get("PolicyDocument", {})
-            for statement in doc.get("Statement", []):
-                actions = statement.get("Action", [])
-                if isinstance(actions, str): actions = [actions]
-                if any("s3:PutObject" in a for a in actions):
-                    conds = statement.get("Condition", {})
-                    has_org = any("aws:PrincipalOrgID" in c or "aws:ResourceOrgID" in c for c_map in conds.values() if isinstance(c_map, dict) for c in c_map)
-                    res_arn = str(statement.get("Resource", "*"))
-
-                    if has_org:
-                        return (
-                            "## Data-Perimeter Review Finding: Compliant\n\n"
-                            "**Status:** PASSED\n\n"
-                            "All S3 data-path changes in this pull request contain valid organizational identity "
-                            "and resource condition keys (`aws:PrincipalOrgID` / `aws:ResourceOrgID`).\n"
-                        )
-                    
-                    # Check exceptions
-                    for exc in exceptions:
-                        bucket_arn = exc.get("approved_bucket_arn", "")
-                        if bucket_arn and (res_arn == bucket_arn or bucket_arn in res_arn or res_arn.startswith(bucket_arn)):
-                            return (
-                                "## Data-Perimeter Review Finding: Approved Vendor Exception Matched\n\n"
-                                f"**Status:** PASSED (APPROVED EXCEPTION)\n\n"
-                                f"- **Affected resources:** IAM Resource `{logical_id}`.\n"
-                                f"- **Target Destination:** `{res_arn}`\n"
-                                f"- **Matched Exception ID:** `{exc['id']}` ({exc['vendor_name']})\n"
-                                f"- **Approval Details:** Approved by {exc['approved_by']} for: \"{exc['reason']}\".\n"
-                                f"- **Action:** Merge permitted under active exception policy `{exc['id']}`.\n"
-                            )
-
-                    return (
-                        "## Data-Perimeter Review Finding: Potential External Exfiltration Path\n\n"
-                        "**Status:** NEEDS HUMAN REVIEW\n\n"
-                        f"- **Affected resources:** IAM Resource `{logical_id}`.\n"
-                        f"- **Risk:** The role gains `s3:PutObject` permissions on `{res_arn}`, but the statement "
-                        "does not restrict principals or destinations using organizational condition keys (`aws:PrincipalOrgID` / `aws:ResourceOrgID`). "
-                        "If this role is subsequently exploited via a confused-deputy path, data can egress to an unmonitored external account.\n"
-                        "- **Remediation:** Add an `aws:ResourceOrgID` condition key via a Resource Control Policy (RCP), "
-                        "or an `aws:PrincipalOrgID` condition key, or confirm this change against the approved-vendor exception manifest (`EXC-2026-04`).\n"
-                        "- **Required action:** A human reviewer must verify exception scope or update the policy before merge.\n"
-                    )
-
-    return "## Data-Perimeter Review Finding: Compliant\n\n**Status:** PASSED\n"
+        raise RuntimeError(f"[Error] LLM API Call Failed: {e}")
 
 def main():
     template_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join("cdk", "cdk.out", "DataPerimeterStack.template.json")
@@ -167,12 +110,7 @@ def main():
 {template_content}
 """
 
-    print("[Agent] Invoking LLM reasoning engine...")
     llm_output = call_llm_agent(user_prompt)
-
-    if not llm_output:
-        print("[Agent] (No LLM API Key detected; executing local reasoning engine)")
-        llm_output = fallback_contextual_reasoning(template_content, policy_obj, exceptions_manifest)
 
     print("\n" + "=" * 60)
     print(llm_output)
