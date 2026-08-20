@@ -22,20 +22,14 @@ export class DataPerimeterStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
     });
 
-    // COMPLIANT BASELINE (Phase 1):
-    // s3:PutObject grant WITH required Organizational Condition Keys (aws:PrincipalOrgID / aws:ResourceOrgID)
+    // PHASE 2 (Improper Change):
+    // s3:PutObject grant WITHOUT required Organizational Condition Keys (aws:PrincipalOrgID / aws:ResourceOrgID)
     dataProcessorRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'CompliantS3WriteWithDataPerimeterCondition',
+        sid: 'NonCompliantS3WriteWithoutDataPerimeterCondition',
         effect: iam.Effect.ALLOW,
         actions: ['s3:PutObject'],
         resources: [bucket.arnForObjects('*')],
-        conditions: {
-          StringEquals: {
-            'aws:PrincipalOrgID': 'o-org1234567',
-            'aws:ResourceOrgID': 'o-org1234567',
-          },
-        },
       })
     );
 

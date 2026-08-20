@@ -18,6 +18,54 @@ def load_json(filepath):
     with open(filepath, "r", encoding="utf-8") as f:
         return json.load(f)
 
+def format_resource_target(resource):
+    """Formats CloudFormation resource structures into human-readable string descriptions."""
+    if isinstance(resource, str):
+        return resource
+    if isinstance(resource, list):
+        return ", ".join([format_resource_target(r) for r in resource])
+    if isinstance(resource, dict):
+        if "Fn::Join" in resource:
+            delimiter, parts = resource["Fn::Join"]
+            formatted_parts = []
+            for part in parts:
+                if isinstance(part, str):
+                    formatted_parts.append(part)
+                elif isinstance(part, dict) and "Fn::GetAtt" in part:
+                    formatted_parts.append(f"{part['Fn::GetAtt'][0]}.Arn")
+                elif isinstance(part, dict) and "Ref" in part:
+                    formatted_parts.append(str(part["Ref"]))
+                else:
+                    formatted_parts.append(str(part))
+            return delimiter.join(formatted_parts)
+        if "Fn::GetAtt" in resource:
+            return f"{resource['Fn::GetAtt'][0]}.Arn"
+        if "Ref" in resource:
+            return f"Ref({resource['Ref']})"
+        return json.dumps(resource)
+    return str(resource)
+
+def resource_matches_exception(resource_raw, approved_arns):
+    """Checks if a policy statement resource matches any approved exception ARN."""
+    formatted = format_resource_target(resource_raw)
+    
+    # Handle direct string or list of resources
+    targets = [resource_raw] if not isinstance(resource_raw, list) else resource_raw
+    
+    for t in targets:
+        t_str = format_resource_target(t)
+        for app_arn in approved_arns:
+            if not app_arn:
+                continue
+            # Exact match
+            if t_str == app_arn or t_str == f"{app_arn}/*":
+                return True
+            # Prefix / wildcard match
+            clean_app_arn = app_arn.rstrip("/*")
+            if t_str.startswith(clean_app_arn):
+                return True
+    return False
+
 def analyze_cloudformation_template(template_path):
     if not os.path.exists(template_path):
         print(f"[Error] Template file not found: {template_path}")
@@ -39,7 +87,7 @@ def analyze_cloudformation_template(template_path):
         props = resource.get("Properties", {})
 
         # Check IAM Roles & Policies for S3 write permissions
-        if res_type == "AWS::IAM::Policy" or res_type == "AWS::IAM::Role":
+        if res_type in ("AWS::IAM::Policy", "AWS::IAM::Role"):
             policies = []
             if res_type == "AWS::IAM::Policy":
                 doc = props.get("PolicyDocument", {})
@@ -57,7 +105,7 @@ def analyze_cloudformation_template(template_path):
                     if isinstance(actions, str):
                         actions = [actions]
 
-                    has_s3_write = any("s3:PutObject" in act or "s3:*" in act or "*" in act for act in actions)
+                    has_s3_write = any("s3:PutObject" in act or "s3:*" in act or act == "*" for act in actions)
                     if effect == "Allow" and has_s3_write:
                         conditions = statement.get("Condition", {})
                         has_org_condition = False
@@ -70,15 +118,16 @@ def analyze_cloudformation_template(template_path):
                                     break
 
                         # Check destination resource restrictions
-                        resource_arn = statement.get("Resource", "*")
-                        is_exception = resource_arn in approved_arns
+                        resource_raw = statement.get("Resource", "*")
+                        is_exception = resource_matches_exception(resource_raw, approved_arns)
 
                         if not has_org_condition and not is_exception:
                             findings.append({
                                 "role_or_policy": role_id,
                                 "policy_name": pname,
                                 "action": actions,
-                                "resource": resource_arn,
+                                "resource_raw": resource_raw,
+                                "resource_formatted": format_resource_target(resource_raw),
                                 "missing_conditions": ["aws:PrincipalOrgID", "aws:ResourceOrgID"]
                             })
 
@@ -98,7 +147,7 @@ def generate_markdown_finding(findings):
         "## Data-Perimeter Review Finding: Potential External Exfiltration Path\n\n"
         "**Status:** NEEDS HUMAN REVIEW\n\n"
         f"- **Affected resources:** IAM Resource `{finding['role_or_policy']}`, Policy `{finding['policy_name']}`.\n"
-        f"- **Risk:** The role gains `s3:PutObject` permissions on `{finding['resource']}`, but the statement "
+        f"- **Risk:** The role gains `s3:PutObject` permissions on `{finding['resource_formatted']}`, but the statement "
         "does not restrict principals or destinations using organizational condition keys (`aws:PrincipalOrgID` / `aws:ResourceOrgID`). "
         "If this role is subsequently exploited via a confused-deputy path, data can egress to an unmonitored external account.\n"
         "- **Remediation:** Add an `aws:ResourceOrgID` condition key via a Resource Control Policy (RCP), "
