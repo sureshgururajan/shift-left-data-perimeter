@@ -1,0 +1,93 @@
+name: Shift-Left Data Perimeter Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  data-perimeter-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CDK Dependencies
+        run: |
+          cd cdk
+          npm ci
+
+      - name: Synthesize CloudFormation Template
+        run: |
+          cd cdk
+          npx aws-cdk synth
+
+      - name: Run Orchestration Agent Reviewer
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          python agent/agent_reviewer.py cdk/cdk.out/DataPerimeterStack.template.json
+
+      - name: Post or Update Single PR Comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const findingComment = fs.readFileSync('finding_comment.md', 'utf8');
+            
+            // List existing PR comments
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            // Find existing bot comments with Data-Perimeter Review Finding
+            const botComments = comments.filter(c => 
+              (c.user.type === 'Bot' || c.user.login.includes('github-actions')) && 
+              c.body.includes('Data-Perimeter Review Finding')
+            );
+
+            if (botComments.length > 0) {
+              // Delete extra duplicate comments if any exist
+              for (let i = 1; i < botComments.length; i++) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComments[i].id
+                });
+              }
+              // Update the primary single comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComments[0].id,
+                body: findingComment
+              });
+              console.log(`Updated primary comment ID ${botComments[0].id} and cleaned up duplicates.`);
+            } else {
+              // Post initial single comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: findingComment
+              });
+              console.log('Posted new single PR comment.');
+            }

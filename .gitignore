@@ -1,0 +1,10 @@
+node_modules/
+cdk/node_modules/
+cdk/cdk.out/
+cdk/.cdk.staging/
+*.js
+!cdk/jest.config.js
+*.d.ts
+__pycache__/
+*.pyc
+.DS_Store
