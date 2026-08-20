@@ -1,0 +1,13 @@
+{
+  "title": "Production OU S3 Data Perimeter Policy Objective",
+  "scope": "Production OU",
+  "rules": [
+    {
+      "id": "RULE-DP-S3-01",
+      "description": "Prevent workloads in Production OUs from writing to non-organization S3 buckets.",
+      "required_condition_keys": ["aws:PrincipalOrgID", "aws:ResourceOrgID"],
+      "allowed_exceptions_ref": "policies/exception_manifest.json",
+      "enforcement_layer": "Resource Control Policies (RCP) & IAM Condition Keys"
+    }
+  ]
+}

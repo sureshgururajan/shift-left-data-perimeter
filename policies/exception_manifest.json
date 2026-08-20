@@ -1,0 +1,12 @@
+{
+  "approved_exceptions": [
+    {
+      "id": "EXC-2026-04",
+      "approved_bucket_arn": "arn:aws:s3:::approved-vendor-analytics",
+      "vendor_name": "Approved Vendor Analytics",
+      "reason": "Production telemetry export to vendor analytics platform",
+      "approved_by": "Security Architecture Team",
+      "status": "ACTIVE"
+    }
+  ]
+}
