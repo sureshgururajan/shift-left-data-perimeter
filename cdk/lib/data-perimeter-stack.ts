@@ -22,20 +22,15 @@ export class DataPerimeterStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
     });
 
-    // COMPLIANT BASELINE:
-    // s3:PutObject grant WITH required Organizational Condition Keys (aws:PrincipalOrgID / aws:ResourceOrgID)
+    // VENDOR EXPORT PR SCENARIO:
+    // s3:PutObject targeting approved vendor bucket arn:aws:s3:::approved-vendor-analytics/*
+    // (Matches Exception ID EXC-2026-04 in policies/exception_manifest.json)
     dataProcessorRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'CompliantS3WriteWithDataPerimeterCondition',
+        sid: 'VendorAnalyticsExportGrant',
         effect: iam.Effect.ALLOW,
         actions: ['s3:PutObject'],
-        resources: [bucket.arnForObjects('*')],
-        conditions: {
-          StringEquals: {
-            'aws:PrincipalOrgID': 'o-org1234567',
-            'aws:ResourceOrgID': 'o-org1234567',
-          },
-        },
+        resources: ['arn:aws:s3:::approved-vendor-analytics/*'],
       })
     );
 
