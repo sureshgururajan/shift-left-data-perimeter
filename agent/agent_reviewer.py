@@ -48,21 +48,32 @@ def load_file_content(filepath):
 
 def call_llm_agent(user_prompt):
     """
-    Invokes LLM API if an API key is configured (OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY).
+    Invokes LLM API (DeepSeek, OpenAI, Gemini) if an API key is configured.
     Returns LLM generated response string, or None if no API key is present.
     """
-    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+
+    if deepseek_key:
+        url = "https://api.deepseek.com/chat/completions"
+        model = "deepseek-chat"
+        api_key = deepseek_key
+        print("[Agent] Calling DeepSeek API (deepseek-chat)...")
+    elif openai_key:
+        url = "https://api.openai.com/v1/chat/completions"
+        model = "gpt-4o"
+        api_key = openai_key
+        print("[Agent] Calling OpenAI API (gpt-4o)...")
+    else:
         return None
 
-    # OpenAI / Compatible API Call
-    url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
     payload = {
-        "model": "gpt-4o",
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt}
@@ -160,7 +171,7 @@ def main():
     llm_output = call_llm_agent(user_prompt)
 
     if not llm_output:
-        print("[Agent] (No LLM_API_KEY detected in env; executing LLM prompt evaluation engine locally)")
+        print("[Agent] (No LLM API Key detected; executing local reasoning engine)")
         llm_output = fallback_contextual_reasoning(template_content, policy_obj, exceptions_manifest)
 
     print("\n" + "=" * 60)
